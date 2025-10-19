@@ -36,29 +36,39 @@ library(car)
   
   # Import data set
   scapis <- fread("work/scapis_working_dataset_revision.tsv", na.strings = c("NA", NA, ""))
+  scapis <- scapis[diabd == "no"]  # Remove 743 individuals with diabetes. 
   
-  clr.species <- fread('work/scapis_clr_species.tsv', na.strings = c("NA", NA, ""), data.table = F)
-  clr.species <- clr.species[, c("Subject", species_overlap), with=F]
+  scapis_species <- fread('SCAPIS/Gutsy/Metagenomics/Processed/scapis_metagenomics_mgs_relative_abundances_v1.0.tsv', data.table=F)
+  setnames(scapis_species, "scapis_id", "Subject")
+  scapis_species <- scapis_species[, c("Subject", species_overlap)]
+  scapis_species <- scapis_species[scapis_species$Subject %in% scapis$Subject, ]
   
   
   # Import Basic model
   load('work/scapis_model_revision.Rdata')
   
   
-  setnames(scapis, c("WaistHip", "HdlFormattedResult", "LdlFormattedResult", "TgFormattedResult", "GlucoseFormattedResult", "Hba1cFormattedResult", 
-                     "CreatinineFormattedResult", "CholesterolFormattedResult", "CrpFormattedResult"),
-                    c("WHR", "HDL", "LDL", "TG", "Glucose", "HbA1c", "TC", "CRP"))
+  setnames(scapis, c("WaistHip", "HdlFormattedResult", "LdlFormattedResult", "TgFormattedResult", 
+                     "Hba1cFormattedResult",  
+                     "CholesterolFormattedResult", "CrpFormattedResult", "SBP_Mean"),
+           c("WHR", "HDL", "LDL", "TG","HbA1c", "TC", "CRP", "SBP"))
   
-  healthoutcomes <- c("WHR", "HDL", "LDL", "TG", "Glucose", "HbA1c", "TC", "CRP")
+  scapis[, "non-HDL" := TC - HDL]
   
+  healthoutcomes <- c("WHR", "TG", "non-HDL", "HbA1c", "SBP", "CRP")
+  
+  
+  scapis <- merge(scapis[, c("Subject", full.model,  healthoutcomes) , with=F], scapis_species, by = "Subject")
+  
+  if(!"data.table" %in% class(scapis)) setDF(scapis)
+  
+  rownames(scapis) <- scapis$Subject
   
   
   # Spearman correlation function 
-  spearman.fun <- function(outcome, species =  species_overlap ){
+  spearman.fun <- function(outcome, species =  species_overlap , cov){
     
-    res <- bplapply(species, function(y){
-      
-      model <- c("age", "Sex", "site_plate", "placebirth", "smokestatus", "education")
+    res <- bplapply(species, function(y, model = cov){
       
       if(outcome!="BMI"){
         model <- c(model, "BMI")
@@ -87,7 +97,7 @@ library(car)
       
       return(temp)
       
-    }, BPPARAM = MulticoreParam(4))
+    }, BPPARAM = MulticoreParam(16))
     
     res <- do.call(rbind, res)
     
@@ -100,7 +110,8 @@ library(car)
   
   # Run model ####
   setDF(scapis)
-  res <- lapply(c("BMI", healthoutcomes), spearman.fun)
+  covariates <- c("age", "Sex", "site_plate", "placebirth", "smokestatus", "education")
+  res <- lapply(c("BMI", healthoutcomes), spearman.fun, cov = covariates)
   res <- rbindlist(res)
   res[, q.value := p.adjust(p.value, method="BH")]
   
