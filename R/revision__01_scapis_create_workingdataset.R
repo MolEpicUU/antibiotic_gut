@@ -1,39 +1,267 @@
 # Project Antibiotic Use and the Gut Microbiota
 
-rm(list = ls())
-
-  # This script will process the SCAPIS phenotype data
+# Version date: 2025-05-13
 
   # Load packages
- library(data.table)
- library(dplyr)
- library(tidyr)
+ suppressMessages(library(data.table))
+ suppressMessages(library(dplyr))
+ suppressMessages(library(tidyr))
   
+
+  # This is the script will:
+  # 1. Import data on SCAPIS phenotypes and prepare the data
+  # 2. Merge phenotype data, gut microbiota data, clinical microbiomics data, place of birth
+  # 3. Import the prescribed drug register data and prepare the data
+  # 4. Merge phenotype, gut microbiota, and drug register data 
   
   # Import datasets 
-  scapis <- fread('nobackup/users/baldanzi/atb_gut/work/scapis_noexclusions.tsv', na.strings = c("","NA",NA))
-  drugs     <- fread('SCAPIS/Gutsy/Phenotypes/Medication/Raw/SCAPIS-REGISTERSU-1715-LMED-20220511-T_R_LMED_27947_2021.txt', na.strings = c("NA",NA,""))
-  drugs2     <- fread('SCAPIS/Gutsy/Phenotypes/Medication/Raw/SCAPIS-REGISTERPETITION-284-20211210-UT_LMED__9771_2018.txt', na.strings = c("NA",NA,""))
-  microb    <- fread('SCAPIS/Gutsy/Metagenomics/Processed/scapis_metagenomics_mgs_relative_abundances_v1.0.tsv')  # 9816 participants 
-  alpha     <- fread("SCAPIS/Gutsy/Metagenomics/Processed/scapis_metagenomics_shannon_diversity_v1.0.tsv",  data.table=F, na.strings = c("NA",NA,""))
+  phenotype <- fread('/proj/nobackup/sens2019512/Projects/antibiotic_mgs/dataset/SCAPIS-DATA-PETITION-514-20230310.csv', na.strings = c("NA",NA,"","<NA>")) # nrow = 11249
+  smoking   <- fread('/proj/sens2019512/SCAPIS/Other/Activity/Raw/SCAPIS-DATA-PETITION-199-20210315.csv', na.strings = c("NA",NA,""))
+  pob       <- fread("/home/baldanzi/Datasets/Placeofbirth.csv", header=T, sep=",")
+  patreg    <- fread('/proj/sens2019512/SCAPIS/Gutsy/Phenotypes/Patient_register/Raw/SCAPIS-REGISTER-PETITION-514-20230310-UT_PAR_SV_9771_2018.txt', na.strings=c("NA","",NA)) # patient register 
+  drugs     <- fread('/proj/sens2019512/SCAPIS/Gutsy/Phenotypes/Medication/Raw/SCAPIS-REGISTERSU-1715-LMED-20220511-T_R_LMED_27947_2021.txt', na.strings = c("NA",NA,""))
+  drugs2     <- fread('/proj/sens2019512/SCAPIS/Gutsy/Phenotypes/Medication/Raw/SCAPIS-REGISTERPETITION-284-20211210-UT_LMED__9771_2018.txt', na.strings = c("NA",NA,""))
+  ids       <- fread("/proj/nobackup/sens2019512/users/baldanzi/atb_gut/Data/id_conversion.txt", header =T) # idkey
+  microb    <- fread('/proj/sens2019512/SCAPIS/Gutsy/Metagenomics/Processed/scapis_metagenomics_mgs_relative_abundances_v1.0.tsv')  # 9816 participants 
+  alpha     <- fread("/proj/sens2019512/SCAPIS/Gutsy/Metagenomics/Processed/scapis_metagenomics_shannon_diversity_v1.0.tsv",  data.table=F, na.strings = c("NA",NA,""))
+  plate     <- fread('/proj/sens2019512/SCAPIS/Gutsy/Metagenomics/Processed/scapis_metagenomics_technical_variables_v1.0.tsv')
+  cci       <- fread('/proj/sens2019512/nobackup/users/baldanzi/atb_gut/work/scapis_charlsonindex.tsv', na.strings = c("NA", NA, ""))
   
+ malmo <- rio::import("/proj/sens2019512/SCAPIS/Gutsy/Phenotypes/Phenotypes/scapis_data_20190215_malmo.txt",
+                       na.strings=c("datatable.na.strings","NA","",NA)) # dates
+  uppsala <- rio::import("/proj/sens2019512/SCAPIS/Gutsy/Phenotypes/Phenotypes/scapis_data_20190215_uppsala.txt",
+                         na.strings=c("datatable.na.strings","NA","",NA)) # dates 
+  uppsala_biobank <- rio::import('/proj/sens2019512/SCAPIS_org/SCAPIS/final_release_CMv1/temporal_phenotypes/146-165-1-3_merged_Uppsala_biobank__KEY_FILE_clean.tsv')
+  # Biobank file containing data for when the fecal samples were received 
+   
+  setnames(drugs, "ID", "Subject")
+  setnames(drugs2, "ID", "Subject")
+  setnames(microb, "scapis_id", "Subject")
+  setnames(plate, c("scapis_id","extraction_plate"),c("Subject","plate"))
+  
+  
+  # Participants who did not consent with the data linkage
+  no_consent_linkage <- smoking$Subject[!smoking$Subject %in% phenotype$Subject]
+  
+  # Merge smoking and diet variables 
+  phenotype <- merge(phenotype, smoking[,.(Subject,derived_smoke_status,Energi_kcal,Fibrer,Protein,Kolhydrater,Fett,Alkohol)], by="Subject", all=T)
+
+  # Clinical Microbiomics Lab Variables ####
+  scapis <- merge(phenotype, plate[,.(Subject,plate)], by="Subject", all.x=T)
+  
+  
+  # Import dates for visit1, visit 2 and approximate fecal sample collection ---------------------------------------------------------------
+  # fecal sample collection is located at a different file for Malmö and Uppsala
+  
+  malmo <- malmo %>% select("SUBJID","Day1VisitD", "Day2VisitD","FecesTubeRecD") %>% 
+    dplyr::rename(DayFecalReceived = FecesTubeRecD, Subject = SUBJID)
+
+  uppsala <- merge(uppsala[,c("rid","Day1VisitD", "Day2VisitD")], 
+                   ids, by.x="rid", by.y = "export_id") %>% 
+    dplyr::rename(Subject = "subject_id") # Fix id in the uppsala file
+  
+  uppsala_biobank$DayFecalReceived <- as.Date(uppsala_biobank$collection_date)
+  
+  uppsala <- merge(uppsala, uppsala_biobank[c("scapis_rid","DayFecalReceived")], 
+                   by.x="rid",by.y="scapis_rid",all=T) %>% 
+    relocate("Subject") %>% mutate(rid = NULL) 
+
+  #apply(malmo[,c("Subject","Day1VisitD", "Day2VisitD","DayFecalReceived")],2,function(x) sum(is.na(x)))
+  # Visit 2 date missing for 39  participants 
+  # Fecal date missing for 1495 participants
+  
+  #apply(uppsala[,c("Subject","Day1VisitD", "Day2VisitD","DayFecalReceived")],2, function(x) sum(is.na(x)))
+  # Visit 2 date missing for 51 participants
+  # Fecal date missing for 194 participants 
+  
+  
+  # MALMO AND UPPSALA HAVE DIFFERENT DATE FORMAT
+  # DO NOT APPEND BEFORE THIS STEP BELOW
+  malmo$Day1VisitD <- as.Date(malmo$Day1VisitD, format='%d-%B-%Y')
+  malmo$Day2VisitD <- as.Date(malmo$Day2VisitD, format='%d-%B-%Y')
+  malmo$DayFecalReceived <- as.Date(malmo$DayFecalReceived, format='%d-%B-%Y')
+  
+  uppsala$Day1VisitD <- as.Date(uppsala$Day1VisitD, format='%d-%B-%Y')
+  uppsala$Day2VisitD <- as.Date(uppsala$Day2VisitD, format='%d-%B-%Y')
+  uppsala$DayFecalReceived <- as.Date(uppsala$DayFecalReceived, format='%d-%B-%Y')
+  
+  malupp <- rbind(malmo,uppsala) # 11445 participants 
+
+  
+  # Calculate interval between Visit 1 and date when fecal sample was received 
+  malupp$Day1_DayFecal <- malupp$DayFecalReceived - malupp$Day1VisitD
+  
+  # Calculate interval between Visit 2 and date when fecal sample was received 
+  malupp$Day2_DayFecal <- malupp$DayFecalReceived - malupp$Day2VisitD
+  
+  # Calculate interval between Visit 1 and Visit 2
+  malupp$Day1_Day2 <- malupp$Day2VisitD - malupp$Day1VisitD
+  
+  malupp <- unique(malupp) # Removed duplicated rows because of replicates
+  malupp <- malupp[malupp$Subject %in% scapis$Subject,]
+  
+  
+  # Merge phenotype file with date file
+  malupp <- dplyr::rename(malupp, Visit1 = Day1VisitD, Visit2 = Day2VisitD)
+  # fwrite(malupp[,c("Subject","Visit1","Visit2","DayFecalReceived")], "/proj/nobackup/sens2019512/users/baldanzi/atb_gut/Data/scapis_visitdates_fecaldeliverydates_processed.csv")
+  scapis <- merge(scapis, malupp, by = "Subject", all.x=T)
+  
+  scapis[is.na(Visit2) & (DayFecalReceived == Visit1+14 | DayFecalReceived < Visit1+14)  , Visit2 := DayFecalReceived]  # 6 participants with missing Visit 2 
+  
+  # Place of birth 
+  pob$placebirth = factor(pob$q005a,  levels = c("scandinavia", "europe", "asia", "other"),  labels = c("Scandinavia", "Europe", "Asia", "Other"))
+  pob[,q005a:=NULL]
+  
+  scapis <- merge(scapis, pob, by.x="Subject", by.y="SCAPISid",all.x=T)
+  
+  
+  # Recoding variables ----------------------------------------------------------------------------
+  
+  setnames(scapis, 'AgeAtVisitOne', 'age')
+  scapis[,Sex := factor(Sex, levels = c("MALE", "FEMALE"), labels = c("male", "female"))]
+  setnames(scapis, 'derived_smoke_status', 'smokestatus')
+  scapis[,smokestatus := factor(smokestatus, levels = c("NEVER","EX_SMOKER","CURRENT"), labels = c("never", "former", "current"))]
+  scapis[,education := factor(cqed001, levels = c(0,1,2,3), labels = c("Compulsory",  "Compulsory", "Upper secondary", "University"))]
+  scapis[,leisurePA := factor(cqpa012, levels = c(0,1,2,3),  labels = c("mainly sedentary",   "light intensity",   "regular moderate intensity ",   "regular high intensity"))]
+  
+  # Removing over- and under- reporters of energy intake
+  scapis[Sex == "female" & (Energi_kcal<=500 | Energi_kcal>=5000), Energi_kcal := NA]
+  scapis[Sex == "male" & (Energi_kcal<=550 | Energi_kcal>=6000), Energi_kcal := NA]
+  
+  # Macronutrient (energy percentage)
+  scapis[!is.na(Energi_kcal), non_alcohol_energy := (Protein*4)+(Fett*9)+(Kolhydrater*4)+(Fibrer*2)]
+  scapis[!is.na(Energi_kcal), Protein_E := (Protein*4)/non_alcohol_energy]
+  scapis[!is.na(Energi_kcal), Fat_E := (Fett*9)/non_alcohol_energy]
+  scapis[!is.na(Energi_kcal), Carbo_E := (Kolhydrater*4)/non_alcohol_energy]
+  scapis[!is.na(Energi_kcal), Fiber_E := (Fibrer*2)/non_alcohol_energy]
+  
+  
+  # Rheumatic disease
+  scapis[,rheumatic := factor(cqhe069, c("YES","NO"), c("yes","no"))]
+  
+  # Diabetes 
+   scapis[, diabd := factor(Diabetes, c("NORMOGLYCEMIA", "ELEV_HBA1C","IFG", "KNOWN_DM","NEW_DM"),
+                        labels = c("no", "no","no", "yes","yes"))]
+  # scapis[, diabd := factor(cqhe038,levels = c("NO", "YES"), labels = c("no", "yes"))]
+  # Hypertension 
+  scapis[, hypertension := factor(cqhe034, levels = c("NO", "YES"), labels = c("no", "yes"))]
+  
+  # Dyslipidemia 
+  scapis[, dyslipidemia := factor(cqhe036, levels = c("NO", "YES"), labels = c("no", "yes"))]
+  
+  # Cancer diagnosis 
+  scapis[,cancer := "no"]
+  scapis[, YearV1 := as.numeric(format(Visit1, format="%Y"))]
+  scapis[, YearCancer := as.numeric(cqhe075)]
+  scapis[cqhe073 == "YES" & (YearCancer==YearV1 | (YearCancer+1)==YearV1), cancer:="1 year before V1"]
+  scapis[cqhe073 == "YES" & (YearV1-YearCancer)>1 & (YearV1-YearCancer)<=5, cancer:="2-4 years before V1"]
+  scapis[cqhe073 == "YES" & (YearV1-YearCancer)>5 & (YearV1-YearCancer)<=9, cancer:="5-8 years before V1"]
+  
+  # PPI ####
+  ppi_reg <-  copy(drugs[grep("^A02BC", ATC), ])
+  ppi_reg  <- merge(ppi_reg, scapis[, .(Subject, Visit1)], by="Subject")
+  ppi_reg <- ppi_reg[as.Date(Visit1) - as.Date(EDATUM) <= 365.2 & as.Date(Visit1) - as.Date(EDATUM) > 0, ]
+  scapis[ , ppi := ifelse(Subject %in% ppi_reg$Subject, "yes","no")]
+  
+  # Statins ####
+  statins_reg <-  copy(drugs2[grep("^C10AA", ATC), ])
+  statins_reg  <- merge(statins_reg, scapis[, .(Subject, Visit1)], by="Subject")
+  statins_reg <- statins_reg[as.Date(Visit1) - as.Date(EDATUM) <= 365.2 & as.Date(Visit1) - as.Date(EDATUM) > 0, ]
+  scapis[ , statins := ifelse(Subject %in% statins_reg$Subject, "yes","no")]
+  
+  # Metformin ####
+  metformin_reg <-  copy(drugs2[grep("^A10BA", ATC), ])
+  metformin_reg  <- merge(metformin_reg, scapis[, .(Subject, Visit1)], by="Subject")
+  metformin_reg <- metformin_reg[as.Date(Visit1) - as.Date(EDATUM) <= 365.2 & as.Date(Visit1) - as.Date(EDATUM) > 0, ]
+  scapis[ , metformin := ifelse(Subject %in% metformin_reg$Subject, "yes","no")]
+  
+  # betablock ####
+  betablock_reg <-  copy(drugs2[grep("^C07AB", ATC), ])
+  betablock_reg  <- merge(betablock_reg, scapis[, .(Subject, Visit1)], by="Subject")
+  betablock_reg <- betablock_reg[as.Date(Visit1) - as.Date(EDATUM) <= 365.2 & as.Date(Visit1) - as.Date(EDATUM) > 0, ]
+  scapis[ , betablock := ifelse(Subject %in% betablock_reg$Subject, "yes","no")]
+  
+  # SSRI ####
+  ssri_reg <-  copy(drugs2[grep("^N06AB", ATC), ])
+  ssri_reg  <- merge(ssri_reg, scapis[, .(Subject, Visit1)], by="Subject")
+  ssri_reg <- ssri_reg[as.Date(Visit1) - as.Date(EDATUM) <= 365.2 & as.Date(Visit1) - as.Date(EDATUM) > 0, ]
+  scapis[ , ssri := ifelse(Subject %in% ssri_reg$Subject, "yes","no")]
+  
+  # Antipsychotics ####
+  antipsycho_reg <-  copy(drugs2[grep("^N05A", ATC), ])
+  antipsycho_reg  <- merge(antipsycho_reg, scapis[, .(Subject, Visit1)], by="Subject")
+  antipsycho_reg <- antipsycho_reg[as.Date(Visit1) - as.Date(EDATUM) <= 365.2 & as.Date(Visit1) - as.Date(EDATUM) > 0, ]
+  scapis[ , antipsycho := ifelse(Subject %in% antipsycho_reg$Subject, "yes","no")]
+  
+  
+  # Create a DNA extraction plate variable for each site 
+  # (plates id have to be transformed to be site specific)
+  scapis$site_plate <- paste0(scapis$Site, scapis$plate)
+  
+  # Follow-up /Coverage ####
+  scapis[, followup :=  as.Date(Visit1) - as.Date("2005-07-01")]
+  
+  # Charlson comorbidity index weighted #### -------------------------------------------------------------
+  cci <- merge(scapis[, .(Subject, diabd, age)], cci, by.x="Subject", by.y="group", all.x=T )
+  
+  cci[is.na(cci)] <- 0
+  
+  # The patient records do not capture uncomplicated diabetes well, so we will enrich that information using self-reported
+  cci[diabd == "yes" & 
+        Diabetes_without_chronic_complication == 0 &
+        Diabetes_with_chronic_complication == 0, 
+      Diabetes_without_chronic_complication := 1]
+  
+  # Age was also not part of the inicial CCIw
+  # cci[, Age := fcase(
+  #   age < 50, 0,
+  #   age >= 50 & age < 60, 1,
+  #   age >= 60 & age < 70, 2,
+  #   age >= 70 & age < 80, 3,
+  #   age >= 80, 4
+  # )]
+  
+  # Re-calculate the weighted comorbidity index
+  cci$CCIw <- cci$Myocardial_infarction + cci$Congestive_heart_failure + cci$Peripheral_vascular_disease + 
+    cci$Cerebrovascular_disease + cci$Chronic_obstructive_pulmonary_disease + cci$Chronic_other_pulmonary_disease + 
+    cci$Rheumatic_disease + cci$Dementia + 2*cci$Hemiplegia + cci$Diabetes_without_chronic_complication + 
+    2*cci$Diabetes_with_chronic_complication + 2*cci$Renal_disease + cci$Mild_liver_disease + 3*cci$Severe_liver_disease + 
+    cci$Peptic_ulcer_disease + 2*cci$Malignancy + 6*cci$Metastatic_solid_tumor + 6*cci$Aids # + cci$Age
+  
+  
+  cci[is.na(CCIw), CCIw := 0]
+  scapis <- merge(scapis, cci[, c("Subject", "CCIw")], by="Subject", all.x=T )
+  
+  
+  #### SAVE INTERMEDIATE FILE ####
+  fwrite(scapis, '/proj/sens2019512/nobackup/users/baldanzi/atb_gut/work/scapis_noexclusions.tsv') # 11287
+  
+  # capis <- fread('/proj/sens2019512/nobackup/users/baldanzi/atb_gut/work/scapis_noexclusions.tsv', na.strings = c("","NA",NA))
   
   # Restrict to participants with gut microbiota data 
   scapis <- scapis[Subject %in% microb$Subject,] # 9816
   
   
+  # DATES #### 
+  # scapis[as.Date(DayFecalReceived)<= as.Date(Visit2),dd := "1_beforeV2"]
+  # scapis[as.Date(DayFecalReceived)<= as.Date(Visit2)+7 & as.Date(DayFecalReceived)> as.Date(Visit2), dd := "2_beforeV2plus7"]
+  # scapis[as.Date(DayFecalReceived)> as.Date(Visit2)+7 ,dd := "3_afterV2plus7"]
+  # scapis[is.na(DayFecalReceived) ,dd := "4_NA"]
+  
   # Exclude those who did not consent with register linkage 
   scapis <- scapis[-which(Subject %in% no_consent_linkage), ] # 9791
+  
+  ### Exclusion of participants based on the phenotype data ###
   
   # Ensure that all participants have a minimum follow up of 8 years. 
   scapis <- scapis[as.Date(scapis$Visit1) > as.Date("2013-07-01"), ]
   
   # Remove participants with interval between visit1 and 2 greater than 60 days. 
-  scapis <- scapis[-which(Day1_Day2>60), ]
+  scapis <- scapis[-which(Day1_Day2>60), ] # 87 (9704)
   
 
   # Participants whose samples were received more than 7 days after Study visit 2
-  scapis <- scapis[-which(Day2_DayFecal>7), ]
+  scapis <- scapis[-which(Day2_DayFecal>7), ] #160 (9544)
   
   # Exclude participants with chronic pulmonary disease or IBD
   scapis <-  scapis[-which(scapis$Prev_COPD=="YES"), ]
@@ -44,6 +272,8 @@ rm(list = ls())
   
   # This dataset is in long format, meaning that every row is a prescription. SCAPIS participants are represented in multiple lines
   atb <-  drugs[grep("^J01", ATC),] 
+  
+    # Change the variable name from ID to Subject, as this is the name in phenotype file
   
   # Restricting to participants included in the phenotype data. 
   atb <- atb[Subject %in% scapis$Subject,] 
@@ -136,6 +366,8 @@ rm(list = ls())
   message(paste0("Number of participants that did not have any antibiotic = ",n_noatb))
   
   
+  # Save the processed prescribed drug register data 
+  fwrite(atb,"/proj/sens2019512/nobackup/users/baldanzi/atb_gut/work/scapis_processed_lakemedelregister_revision.tsv")
   
   
   # Categorize the prescriptions according to the period when it was dispensed ####
@@ -365,7 +597,7 @@ rm(list = ls())
   
   # Alpha diversity metrics -------------------------------------------------------------------------------------------------
   
-  downmgs <- fread('SCAPIS/Gutsy/Metagenomics/Processed/scapis_metagenomics_mgs_ds_relative_abundances_v1.0.tsv', data.table=F, na.strings = c("NA",NA,""))
+  downmgs <- fread('/proj/sens2019512/SCAPIS/Gutsy/Metagenomics/Processed/scapis_metagenomics_mgs_ds_relative_abundances_v1.0.tsv', data.table=F, na.strings = c("NA",NA,""))
   rownames(downmgs) <- downmgs$scapis_id
   downmgs$scapis_id <- NULL
   
@@ -375,16 +607,17 @@ rm(list = ls())
   scapis <- merge(scapis, alpha, by.x="Subject", by.y = "scapis_id")
   
   # Save final phenotype data ####
-  fwrite(scapis, file = "nobackup/users/baldanzi/atb_gut/work/scapis_working_dataset_revision_noatbexclusion.tsv")
+  fwrite(scapis, file = "/proj/sens2019512/nobackup/users/baldanzi/atb_gut/work/scapis_working_dataset_revision_noatbexclusion.tsv")
   
   
   scapis[last_EDATUM >= (Visit1-30),  .N ]
   scapis <- scapis[is.na(last_EDATUM) | last_EDATUM < (Visit1-30), ]
-  fwrite(scapis, file = "nobackup/users/baldanzi/atb_gut/work/scapis_working_dataset_revision.tsv")
+  fwrite(scapis, file = "/proj/sens2019512/nobackup/users/baldanzi/atb_gut/work/scapis_working_dataset_revision.tsv")
   
   
   # Calculate species prevalence -------------------------------------------------------------------------------------------------
   # Main model covariates 
+  
   basic.model <- c("age","Sex","placebirth","smokestatus","education","site_plate")
   full.model <- c(basic.model, "BMI", "CCIw", "ppi", "statins", "metformin", "betablock", "ssri", "polypharmacy12m_cat", "antipsycho")
   
@@ -398,10 +631,15 @@ rm(list = ls())
   
   
   save(list=c("basic.model","prevalent.species","non.prevalent.species","full.model"),
-       file='nobackup/users/baldanzi/atb_gut/work/scapis_model_revision.Rdata')
+       file='/proj/sens2019512/nobackup/users/baldanzi/atb_gut/work/scapis_model_revision.Rdata')
   
   message(paste0("Full model saved = ",paste0(full.model,collapse = ", ")))
   message(paste0("Length of prevalent species = ",length(prevalent.species)))
+  
+  # Prevalence table 
+  prev_table <- data.table(species = names(prevalence), prevalence_scapis = prevalence)
+  
+  fwrite(prev_table, '/proj/sens2019512/nobackup/users/baldanzi/atb_gut/results/prevalence_species_scapis.tsv', sep = '\t')
   
   
   message("End")

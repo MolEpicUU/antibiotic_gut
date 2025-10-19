@@ -198,10 +198,8 @@ rm(list=ls())
   
   # Calculate species prevalence -------------------------------------------------------------------------------------------------
   # Main model covariates 
-  basic.model <- c("age", "sex", "placebirth", "smokestatus", "education", "center","dna_extraction_plate")
-  #full.model <- c(main.model, "BMI","CCIw", "diabd","rheumatic","cancer", "ppi")
-  
-  full.model <- c(basic.model, "BMI", "CCIw", "ppi", "statins", "metformin", "betablock", "ssri", "polypharmacy12m_cat")
+  basic.model <- c("age", "sex", "placebirth", "smokestatus", "education", "center","aliquoting_plate")
+  full.model <- c(basic.model, "BMI", "CCIw", "ppi", "statins", "metformin", "betablock", "ssri", "polypharmacy12m_cat", "antipsycho")
   
   cc <- complete.cases(simpler[, basic.model, with=F])
   

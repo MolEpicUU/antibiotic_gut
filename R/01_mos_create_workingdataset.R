@@ -219,7 +219,7 @@
   
   ## Calculate species prevalence ----------------------------------------------
   basic.model <- c("age","sex","country_birth","smoking","education","extraction_plate")
-  full.model <- c(basic.model,"BMI","CCIw", "ppi", "statins", "metformin", "betablock", "ssri", "polypharmacy_cat")
+  full.model <- c(basic.model,"BMI","CCIw", "ppi", "statins", "metformin", "betablock", "ssri", "polypharmacy_cat", "antipsycho")
   
   cc <- complete.cases(mos[, basic.model, with=F])
   
