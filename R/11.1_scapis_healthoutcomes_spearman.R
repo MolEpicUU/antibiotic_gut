@@ -2,21 +2,20 @@
 
 # Script created to use the SCAPIS data 
 
-# This script will investigate the association between species and 
-# cardiometabolic markers. 
+# Correlation between species associated with antibiotic use and cardiometabolic biomarkers. 
 
 # Load packages
 library(data.table)
 library(dplyr)
 library(tidyr)
 library(BiocParallel)
-library(car)
+library(ppcor)
 
-  setwd("nobackup/users/baldanzi/atb_gut/")
+setwd('nobackup/users/baldanzi')
   
   meta_res <- fread("results/meta_species_class_clean.tsv")
   
-  meta_res <- meta_res[grepl("lincos|FQs|BetaR", exposure) & model == "full.model" & q.value<0.05, ]
+  meta_res <- meta_res[grepl("lincos|FQs|BetaR", exposure) & model == "full.model" & q.value < 0.05, ]
   meta_res <- meta_res %>% separate(exposure, into = c("antibiotic", "period"), sep = "_(?=\\d)", extra = "merge", remove = F)
   setDT(meta_res)
   
@@ -38,7 +37,8 @@ library(car)
   scapis <- fread("work/scapis_working_dataset_revision.tsv", na.strings = c("NA", NA, ""))
   scapis <- scapis[diabd == "no"]  # Remove 743 individuals with diabetes. 
   
-  scapis_species <- fread('SCAPIS/Gutsy/Metagenomics/Processed/scapis_metagenomics_mgs_relative_abundances_v1.0.tsv', data.table=F)
+  # non-HDL-c
+  scapis_species <- fread('../SCAPIS/Gutsy/Metagenomics/Processed/scapis_metagenomics_mgs_relative_abundances_v1.0.tsv', data.table=F)
   setnames(scapis_species, "scapis_id", "Subject")
   scapis_species <- scapis_species[, c("Subject", species_overlap)]
   scapis_species <- scapis_species[scapis_species$Subject %in% scapis$Subject, ]
@@ -51,7 +51,7 @@ library(car)
   setnames(scapis, c("WaistHip", "HdlFormattedResult", "LdlFormattedResult", "TgFormattedResult", 
                      "Hba1cFormattedResult",  
                      "CholesterolFormattedResult", "CrpFormattedResult", "SBP_Mean"),
-           c("WHR", "HDL", "LDL", "TG","HbA1c", "TC", "CRP", "SBP"))
+                    c("WHR", "HDL", "LDL", "TG","HbA1c", "TC", "CRP", "SBP"))
   
   scapis[, "non-HDL" := TC - HDL]
   
@@ -119,11 +119,35 @@ library(car)
   
   fwrite(res, file = "results/scapis_healthoutcomes_spearman.tsv", sep = "\t")
   
-  message("End")
+  message("End - all")
+  
+   # Run model - males ####
+  scapis_backup <- scapis 
+  scapis <- scapis_backup[scapis_backup$Sex=="male", ]  
+
+  covariates <- c("age", "site_plate", "placebirth", "smokestatus", "education")
+  res <- lapply(c("BMI", healthoutcomes), spearman.fun, cov = covariates)
+  res <- rbindlist(res)
+  res[, q.value := p.adjust(p.value, method="BH")]
+
+  res[q.value<0.05,]
+
+  fwrite(res, file = "results/scapis_healthoutcomes_spearman_males.tsv", sep = "\t")
+
+  message("End - males")
   
   
   
-  
-  
-  
-  
+  # Run model - females ####
+  scapis <- scapis_backup[scapis_backup$Sex=="female", ]
+
+
+  res <- lapply(c("BMI", healthoutcomes), spearman.fun, cov = covariates)
+  res <- rbindlist(res)
+  res[, q.value := p.adjust(p.value, method="BH")]
+
+  res[q.value<0.05,]
+
+  fwrite(res, file = "results/scapis_healthoutcomes_spearman_females.tsv", sep = "\t")
+
+  message("End - females")
