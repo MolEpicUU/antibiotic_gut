@@ -2,6 +2,7 @@
 
 # Script created to use the MOS data 
 
+
 # Load packages
   library(data.table)
   library(BiocParallel)
@@ -10,17 +11,16 @@
   
   t0 = Sys.time()
 
-# This script will investigate the associations of number of previous antibiotics with species abundance stratified 
-# by sex and age
+# This script will investigate the associations of number of previous antibiotics with species abundance
   
 # MIXED MODEL REGRESSION ####
 
   setwd('nobackup/users/baldanzi/atb_gut/')
-
+  
   # Import data set
   mos <- fread("work/mos_working_dataset_revision.tsv", na.strings = c("NA", NA, ""))
   clr.species <- fread('work/mos_clr_species.tsv', na.strings = c("NA", NA, ""),  data.table = F)
-
+  
   # Import Basic model and species by abundance
   load('work/mos_model_revision.Rdata')
 
@@ -38,7 +38,7 @@
     cc <- complete.cases(temp.data)
     Nexp <- temp.data[cc ,.(exposure = names(.SD), Nexp = as.numeric(lapply(.SD, function(x) sum(x>0)))), .SDcols  = exposure]
     
-    exp_equal_zero <- Nexp[Nexp<4, exposure]
+    exp_equal_zero <- Nexp[Nexp<=5, exposure]
     
     exposure <- exposure[!exposure %in% exp_equal_zero]
     
@@ -53,32 +53,17 @@
           
           temp.res <- summary(fit)
           exp_present <- grep("^Class", rownames(temp.res$coef), v=T)
-          
-          gvif <- car::vif(fit)[exp_present, "GVIF", drop = F]
     
           N = length(temp.res$residuals)
           res <- temp.res$coef[exp_present, ]
           colnames(res) <- c("beta", "SE","df", "t.value","p.value")
           
-          listCI <- tryCatch({
-              suppressMessages(ci <- confint(fit,parm=exp_present))
-              LCI = ci[,1]
-              HCI = ci[,2]
-              
-              data.frame(LCI = LCI, HCI = HCI, message = NA)
-              
-            }, error = function(e){
-              
-              data.frame(LCI = NA, HCI = NA, message = e$message)
-              
-            })
-          
-         data.table(outcome = y, exposure = rownames(res), res, LCI=listCI$LCI, HCI=listCI$HCI, N = N, gvif, message = listCI$message)
-          
+
+          data.table(outcome = y, exposure = rownames(res), res,  N = N, message = NA)
          
       }, error = function(e){
        
-         df <- data.table(outcome = y, exposure =NA, beta=NA,SE=NA,df=NA,t.value=NA,p.value=NA,LCI=NA,HCI=NA,N=NA,GVIF=NA, message = e$message)
+        df <- data.table(outcome = y, exposure =NA, beta=NA,SE=NA,df=NA,t.value=NA,p.value=NA,N=NA, message = e$message)
          return(df)
          
       })
@@ -99,54 +84,57 @@
   
   #### Full model #### ----------------------------------------------------
 
-  message("Sex stratified")
-  message("Male")
+   # By Class of antibiotics #### ------------------------------------------------
   
-  atbclasses <-  grep("Class_.*yr", colnames(mos), value=T)
-  atbclasses <-  atbclasses[!grepl("NIT", atbclasses)] 
-  atbclasses <- grep("Peni_Comb", atbclasses , value=T, invert=T) 
-  atbclasses <- grep("SMZTMP", atbclasses , value=T, invert=T) 
-   
 
+  
+  atbclasses = grep("Class_.*yr", colnames(mos), value=T)
   full.model_sex = full.model[-which(full.model=="sex")]
+   
+  message("sex stratified")
+  message("Male")
+
+  
+  
   resmos_male <- linear.fun(prevalent.species, model = full.model_sex,  dat = mos[sex == 1, ])
   resmos_male$model = "male"
-
   resmos_male[, Nexp := as.numeric(Nexp)]
-
+  
+  fwrite(resmos_male, file='results/mos_species_class_sa_stratified_allantibiotics__male.tsv', sep = "\t")
+  rm(resmos_male) 
+  
   message("Female")
-  atbclasses = grep("Class_.*yr", colnames(mos), value=T)
   resmos_female <- linear.fun(prevalent.species, model = full.model_sex,  dat = mos[sex == 2, ])
   resmos_female$model = "female"
-
-  fwrite(rbindlist(list(resmos_male, resmos_female), fill=T) , file='results/mos_species_class_sa_stratified.tsv', sep = "\t")
+  resmos_female[, Nexp := as.numeric(Nexp)]
+  
+  fwrite(resmos_female, file='results/mos_species_class_sa_stratified_allantibiotics__female.tsv', sep = "\t")
+  rm(resmos_female)
+  
 
   message("\nAge stratified")
-  
+   
   message("Below 55")
-  
-  atbclasses = grep("Class_.*yr", colnames(mos), value=T)
-  atbclasses <- grep("Peni_Comb", atbclasses , value=T, invert=T) 
-  
+
   resmos_agebelow55 <- linear.fun(prevalent.species, model = full.model,  dat = mos[age <= 55, ])
-  resmos_agebelow55$model = "age <= 55 years"
-
-  fwrite(rbindlist(list(resmos_male, resmos_female, resmos_agebelow55), fill=T) , file='results/mos_species_class_sa_stratified.tsv', sep = "\t")
-
+  resmos_agebelow55$model = "agebelow55"
+  resmos_agebelow55[, Nexp := as.numeric(Nexp)]
+  
+  fwrite(resmos_agebelow55, file='results/mos_species_class_sa_stratified_allantibiotics__agebelow55.tsv', sep = "\t")
+  rm(resmos_agebelow55)
+  
   message("Above 55")
   
-  atbclasses <-  grep("Class_.*yr", colnames(mos), value=T)
+  resmos_ageabove55 <- linear.fun(prevalent.species, model = full.model,  dat = mos[age > 55, ])
+  resmos_ageabove55$model = "ageabove55"
+  resmos_ageabove55[, Nexp := as.numeric(Nexp)]
   
-  resmos_ageabove55 <- linear.fun(prevalent.species, model = full.model,  dat = mos[age > 55 & !lopnrMOS %in% ind_to_exclude, ])
-  resmos_ageabove55$model = "age > 55 years"
+  fwrite(resmos_ageabove55, file='results/mos_species_class_sa_stratified_allantibiotics__ageabove55.tsv', sep = "\t")
+  rm(resmos_ageabove55)
   
-   
-   resmos_age_sex <- rbindlist(list(resmos_male, resmos_female, resmos_agebelow55, resmos_ageabove55), fill =T)
-   resmos_age_sex$cohort <- "MOS"
-
-  fwrite(resmos_age_sex, file='results/mos_species_class_sa_stratified.tsv', sep = "\t")
 
   t1 = Sys.time()
   print(t1-t0)
   message("End")
+  
   

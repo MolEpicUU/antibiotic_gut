@@ -6,13 +6,18 @@
   
   # Meta-analysis of All antibiotics 
   
-  library(data.table)
+  suppressMessages({library(data.table)
   library(metafor)
   library(dplyr)
   library(tidyr)
-  library(BiocParallel)
+  library(BiocParallel)})
   
- 
+  
+  stratum <- commandArgs(trailingOnly = TRUE)
+  #  stratum <- "male"
+
+  print(stratum)
+  
   setwd('nobackup/users/baldanzi/atb_gut/results')
   
   
@@ -46,109 +51,68 @@
   var <- c("exposure","outcome","model","cohort","beta","SE", "N")
   
   # SCAPIS
-  scapis  <-  fread('scapis_species_sa_stratified.tsv') 
+  scapis  <-  fread(paste0('scapis_species_class_sa_stratified_allantibiotics__', stratum, '.tsv')) 
   scapis[,cohort:="SCAPIS"]
   scapis  <- scapis[,var,with=F]
   
   # MOS
-  mos <- fread('mos_species_class_sa_stratified.tsv', na.strings=c("NA", "", NA))
+  mos <- fread(paste0('mos_species_class_sa_stratified_allantibiotics__', stratum, '.tsv')) 
   mos[,cohort:="MOS"]
   mos <- mos[,var,with=F]
   
   # SIMPLER
-  simpler <- fread('simpler_species_sa_stratified.tsv', na.strings=c("NA","",NA))
+  if(stratum!="agebelow55"){
+  simpler <- fread(paste0('simpler_species_class_sa_stratified_allantibiotics__', stratum, '.tsv')) 
   simpler[,cohort:="SIMPLER"]
   simpler <- simpler[,var,with=F]
   
-  res <- rbind(scapis, mos, simpler)
+    res <- rbind(scapis, mos, simpler)
+    
+    species_all_cohorts <- Reduce(intersect, list(scapis$outcome, mos$outcome, simpler$outcome))
+    
+  } else{
+    
+    res <- rbind(scapis, mos)
+    
+    simpler <- fread('simpler_species_class_sa_stratified_allantibiotics__ageabove55.tsv')
+    species_all_cohorts <- Reduce(intersect, list(scapis$outcome, mos$outcome, simpler$outcome))
+    
+  }
   
   atbclasses <- unique(res$exposure)
-  atbclasses <- atbclasses[grep("FQs|lincosam|BetaR|BetaS|Peni_Ext|TCL", atbclasses)]
-  
-  res <- res[exposure %in% atbclasses, ]
 
   
   # Meta-analysis by model 
-  species_all_cohorts <- res[model == "female",.N, by=.(outcome,exposure)] %>% filter(N==3) %>% pull(outcome) %>% unique(.)
+  
   
   res <- res[outcome %in% species_all_cohorts, ]
   
   unique_models <-  unique(res$model)
   message(paste("Number of models =", length(unique_models)))
   
-  meta_res <- lapply(unique_models, function(model_var){
+
+    meta_res <- do.call(rbind, bplapply(species_all_cohorts, meta_fun,  res = res, m = stratum, BPPARAM = MulticoreParam(16)))
+    meta_res <- meta_res %>% mutate(q.value = p.adjust(p.value, method = "BH"))
+    setDT(meta_res)
     
-    meta_res_temp <- do.call(rbind, bplapply(species_all_cohorts, meta_fun,  res = res, m = model_var, BPPARAM = MulticoreParam(16)))
-    meta_res_temp <- meta_res_temp %>% mutate(q.value = p.adjust(p.value, method = "BH"))
+    meta_res  <- merge(meta_res, scapis[, .(exposure, outcome, N_scapis=N)], by= c("exposure", "outcome"), all.x=T)
+    meta_res  <- merge(meta_res, mos[, .(exposure, outcome, N_mos=N)], by= c("exposure", "outcome"), all.x=T)
+
     
-    meta_res_temp$N_scapis  <- unique(scapis[model == model_var, N])
-    
-    if(model_var == "age <= 55 years") {
-      meta_res_temp$N_simpler <- 0
+    if(stratum == "agebelow55") {
+      meta_res$N_simpler <- 0
     } else {
-      meta_res_temp$N_simpler <- unique(simpler[model == model_var, N])
+      meta_res  <- merge(meta_res, simpler[, .(exposure, outcome, N_simpler=N)], by= c("exposure", "outcome"), all.x=T)
     }
       
-    if(model_var == "age > 55 years") {
-      meta_res_temp$N_mos <- 0
-    } else {
-      meta_res_temp$N_mos <- unique(mos[model == model_var & !is.na(N), N])
-    }
-    
-      
-      return(meta_res_temp)
-      
-  })
   
-  meta_res <- rbindlist(meta_res, fill=T)
-  
+  # Save results 
+  fwrite(meta_res, paste0('meta_species__sa_stratified_allantibiotics_', stratum ,'.tsv'), sep = "\t")
 
   
-  # Save results 
-  fwrite(meta_res,'meta_species__sa_stratified.tsv', sep = "\t")
+  head(meta_res)
   
-  
-  # ------------------------------------------------------------------------------
-  
-  res <- rbind(scapis, mos)
-  res <- res[exposure %in% atbclasses, ]
-  
-  # Meta-analysis by model 
-  
-  unique_models <-  c("age > 55 years", "age <= 55 years")
-  message(paste("Number of models =", length(unique_models)))
-  
-  meta_res <- lapply(unique_models, function(model_var){
-    
-    meta_res_temp <- do.call(rbind, bplapply(species_all_cohorts, meta_fun,  res = res, m = model_var, BPPARAM = MulticoreParam(16)))
-    meta_res_temp <- meta_res_temp %>% mutate(q.value = p.adjust(p.value, method = "BH"))
-    
-    meta_res_temp$N_scapis  <- unique(scapis[model == model_var, N])
-    
-    if(model_var == "age <= 55 years") {
-      meta_res_temp$N_simpler <- 0
-    } else {
-      meta_res_temp$N_simpler <- unique(simpler[model == model_var, N])
-    }
-    
-    if(model_var == "age > 55 years") {
-      meta_res_temp$N_mos <- 0
-    } else {
-      meta_res_temp$N_mos <- unique(mos[model == model_var & !is.na(N), N])
-    }
-    
-    
-    return(meta_res_temp)
-    
-  })
-  
-  meta_res <- rbindlist(meta_res, fill=T)
-  
-  
-  
-  # Save results 
-  fwrite(meta_res,'meta_species__sa_stratified_withoutsimpler.tsv', sep = "\t")
-  
-  message("End antibiotics - species stratified")
+message(stratum)
+message("END")
   
   
